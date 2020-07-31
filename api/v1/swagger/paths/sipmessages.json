@@ -1,0 +1,63 @@
+{
+  "/sipmessages": {
+    "post": {
+      "x-mojo-to": "SipOHttp#process",
+      "operationId": "SipOHttp",
+      "tags": ["sipmessages"],
+      "parameters": [
+        {
+          "name": "body",
+          "in": "body",
+          "description": "sip in XML.",
+          "required": true,
+          "schema": {
+            "$ref": "../definitions.json#/sipmessage"
+          }
+        }
+      ],
+      "consumes": [
+        "application/json",
+        "text/plain"
+      ],
+      "produces": [
+        "application/xml"
+      ],
+      
+      "responses": {
+      "200": {
+          "description": "Sip message ok",
+          "schema": {
+            "type": "object",
+            "items": {
+              "$ref": "../definitions.json#/sipmessage"
+            }
+          }
+        },
+        "201": {
+          "description": "Processed sipmessage",
+          "schema": {
+            "$ref": "../definitions.json#/sipmessage"
+          }
+        },
+        "400": {
+          "description": "Missing or wrong parameters",
+          "schema": {
+            "$ref": "../definitions.json#/error"
+          }
+        },
+        "500": {
+          "description": "Internal server error",
+          "schema": {
+            "$ref": "../definitions.json#/error"
+          }
+        },
+        "503": {
+          "description": "Under maintenance",
+          "schema": {
+            "$ref": "../definitions.json#/error"
+          }
+        }
+      }
+    }
+  }
+}

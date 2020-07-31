@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "request_xml": {
+      "description": "sip xml req",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": ["request_xml"]
+}

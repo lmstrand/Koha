@@ -1,0 +1,9 @@
+{
+  "sipMessage": {
+    "name": "request",
+    "in": "body",
+    "description": "sipmessage",
+    "required": true,
+    "type": "string"
+  }
+}

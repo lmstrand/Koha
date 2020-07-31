@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' standalone="yes" ?>
+<sipdevices>
+	<sipdevice1>
+		<host>10.0.3.217</host>
+		<port>6009</port>
+		<socket>/home/koha/Koha/koha-tmpl/test.sock</socket>
+	</sipdevice1>
+	<sipdevice2>
+		<host>10.0.3.217</host>
+		<port>6010</port>
+		<socket>/home/koha/Koha/koha-tmpl/test2.sock</socket>
+	</sipdevice2>
+
+</sipdevices>
