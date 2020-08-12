@@ -1,17 +1,11 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-
 use IO::Socket::INET;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
 use Socket qw(:crlf);
-use IO::Select;
-use IO::Socket::UNIX qw( SOCK_STREAM SOMAXCONN );
 use XML::LibXML;
-use Data::Dump qw(dump);
-use Data::Dumper;
 use autodie;
-
 use lib 'lib';
 
 binmode STDERR, ':utf8';

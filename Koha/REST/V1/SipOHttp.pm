@@ -23,15 +23,10 @@ use FindBin qw($Bin);
 use lib "$Bin";
 use Koha::Exceptions;
 use Koha::Logger;
-use Data::Dumper;
 use XML::LibXML;
 use Socket qw(:crlf);
-use IO::Socket::UNIX qw( SOCK_STREAM );
-use IO::Socket::Timeout;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
-use Getopt::Long;
 use lib("/home/koha/Koha");
-
 use HTML::Template;
 use Try::Tiny;
 
