@@ -4,26 +4,23 @@ use warnings;
 
 use IO::Socket::INET;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
-use threads;
 use Socket qw(:crlf);
 use IO::Select;
 use IO::Socket::UNIX qw( SOCK_STREAM SOMAXCONN );
-use XML::Simple;
 use XML::LibXML;
 use Data::Dump qw(dump);
 use Data::Dumper;
 use autodie;
-use DateTime;
 
 use lib 'lib';
 
+binmode STDERR, ':utf8';
+
 #This is a self service proxy server for communication between the Koha REST "sipmessages" endpoint
-#via a UNIX socket and between the sipserver via a Socket::INET socket.
+#and between a sipserver via Socket::INET sockets.
 
 #Sipserver's service parameter must be set: client_timeout="0" in SIPconfig.xml for this script to work properly!
 #Self check device handles timeouts.
-
-#TODO pass sip server parameters in @ARGV
 
 #While we attempt to write things to read-side through socket, if the socket of read-side already closed,
 #the write-side would got a signal SIGPIPE, that causes write-side killed by SIGPIPE.
@@ -32,46 +29,45 @@ $SIG{PIPE} = 'IGNORE';
 
 $SIG{'TSTP'} = 'IGNORE';    # Ctrl-Z disabled
 
-#Exit server program with CTRL+C, Zombies with Z
-
-my $port_listen = 2836;
-
+#Get command line argument (the sipdevice name = xml login parameter)
 my $device = shift or die "Usage: $0 SIPDEVICELOGINNAME\n";
 
-print "Starting proxy server for device $device: \n";
+print STDERR "Starting proxy server for device $device: \n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
-my ( $socket, $siphost, $sipport ) = getConfig($device);
+my ( $proxyhost, $proxyport, $siphost, $sipport ) = getConfig($device);
 
 #TODO change into var/spool/ in sipdevices.xml
-my $SOCK_PATH = $socket;
-unlink($SOCK_PATH) if -e $SOCK_PATH;
 
 $| = 1;    # Autoflush
 
 #Needs to be a plain IO::Socket so we can use $client_socket->shutdown(SHUT_RD) and (SHUT_WR)to end
 #reading/writing to sipserver without problems and preserving socket connection
 
-#    my $server = IO::Socket->new(
-#        Domain => AF_INET,
-#        Type => SOCK_STREAM,
-#        Proto => 'tcp',
-#        LocalHost => '0.0.0.0',
-#        LocalPort => $port_listen,
-#        ReusePort => 1,
-#        KeepAlive => 0,
-#        Listen => 5
-#
-#    ) || die "Can't open socket: $@";
+my $server = IO::Socket->new(
+	Domain    => AF_INET,
+	Type      => SOCK_STREAM,
+	Proto     => 'tcp',
+	LocalHost => $proxyhost,
+	LocalPort => $proxyport,
+	ReusePort => 1,
+	KeepAlive => 0,
+	Listen    => 5
+) || die "Can't open proxy socket for $device: $@";
 
-#UNIX Socket for REST endpoint (SipOHttp)
-my $server = IO::Socket::UNIX->new(
-	Type   => SOCK_STREAM(),
-	Local  => $SOCK_PATH,
-	Listen => SOMAXCONN,
-) or die("Can't create server socket: $!\n");
-
-#Change socketfile permissions for client, needs to be 777
-chmod 0777, $SOCK_PATH;
+#handle signals
+#TODO CTRL+C sends an emtpy message to sipserver
+$SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub {
+	print STDERR ("SIGTERM - External termination request. Leaving...") if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+	if ($server) {
+		print STDERR "Closing server socket. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+		$server->shutdown(SHUT_RDWR);
+		$server->close;
+		exit;
+	}
+	else {
+		exit;
+	}
+};
 
 #Socket:INET to sipserver
 my $sipsocket = IO::Socket::INET->new(
@@ -82,32 +78,19 @@ my $sipsocket = IO::Socket::INET->new(
 	KeepAlive => 1,
 	Reuse     => 1
 
-) or die "Couldn't be a tcp server on port '$sipport' : $@\n";
+) or die "Couldn't be a tcp server on $siphost:$sipport : $@\n";
 
-print "Waiting for tcp to connect to $SOCK_PATH\n";
+print STDERR "Waiting for tcp to connect to $proxyport\n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 while (1) {
 
 	my $client_socket = $server->accept();
 
 	#?
-	#my $sip_socket = $server->accept();
+	#my $sip_socket = $sipsocket->accept();
 
-	#non-UNIX socket params for print
+	print STDERR "Socket has connected.\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
-	#my $client_address = $client_socket->peerhost;
-	#my $client_port    = $client_socket->peerport;
-	#my $sip_addr = $sip_socket->peerhost;
-	#my $sip_port = $sip_socket->peerport;
-
-	#my $datetime = DateTime->now;
-
-	print "Unix Socket has connected\n";
-
-	#If using threads:
-	#threads->create( \&connection, $client_socket, $sipsocket );
-
-	#No threads:
 	connection( $client_socket, $sipsocket );
 
 }
@@ -122,55 +105,21 @@ sub connection {
 	$sipsock->autoflush(1);
 
 	if ( $sipsock->connected ) {
-		print "Connection to SIP socket OK. \n";
+		print STDERR "Connection to SIP socket OK. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 	}
 
 	else {
-		#???????????????????????
-		#How to test if sipserver socket has disconnected
-		print "Sip socket closed!";
-		my $sipsocket = IO::Socket::INET->new(
-
-			PeerHost  => '10.0.3.217',
-			PeerPort  => 6009,
-			Proto     => 'tcp',
-			KeepAlive => 1,
-			Reuse     => 1
-
-		) or die "Couldn't be a tcp server on port 6009 : $@\n";
+		die "Can't connect to SIP socket. : $@\n";
 	}
-
-	#	my $select = IO::Select->new();
-	#	#my $sock   = IO::Socket->new(...);
-	#	$select->add($sipsock);
-	#	if ( my @sockets = $select->can_read() ) {
-	#		...;
-	#	}
-	#}
-
-	#print "Sipsocket has timed out, trying to reconnect...";
-	#$sipsock = IO::Socket::INET->new(
-	#
-	#	PeerHost  => '10.0.3.217',
-	#	PeerPort  => 6009,
-	#	Proto     => 'tcp',
-	#	KeepAlive => 1,
-	#	Reuse     => 1
-	#
-	#) or die "Couldn't be a tcp server on port 6009 : $@\n";
-	#}
 
 	while (1) {
 
 		if ( $sipsock->connected ) {
 
-			#print "Still connected to SIP socket. \n";
+			#Still connected to SIP socket
 
 			my $data     = "";
 			my $respdata = "";
-
-			#my $terminator = q{};
-			#$terminator = ( $terminator eq 'CR' ) ? $CR : $CRLF;
 
 			$data = <$client_socket>;
 
@@ -178,29 +127,25 @@ sub connection {
 			$client_socket->shutdown(SHUT_RD);
 			$client_socket->flush;
 
-			#Should only happen when sipserver closed socket.
 			if ( $data eq "" ) {
-				print "Empty request!"
+				print STDERR "Empty request!" if $ENV{'DEBUG'};
 
 				  #return;
 			}
 
-			#my $datetime = DateTime->now;
-			print ">>>>>> Sending: $data\n";
+			print STDERR ">>>>>> Sending: $data\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 			print $sipsock $data;
 
 			$sipsock->recv( $respdata, 1024 );
 			$sipsock->flush;
 
-			#$datetime = DateTime->now;
-			print "<<<<<< Received from SIPserver: $respdata\n\n";
+			print STDERR "<<<<<< Received from SIPserver: $respdata\n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
-			######Handle empty message ---_> next message need a fresh connection
-			######Is this a failsafe in sipserver? Prevent sipserver from disconnecting?
+			######Handle empty message ---_> next message needs a fresh connection
+			######Is this a failsafe in sipserver?
 			if ( $respdata eq "" ) {
-				print
-"Sip server returned no data (bad device login mes/sipserver down?) $data\n";
+				print STDERR "Sip server returned no data (bad device login mes/sipserver down?) $data\n" if $ENV{'DEBUG'};
 				my $errordata = "Disconnected!";
 
 				#Send disconnect info to REST
@@ -213,33 +158,28 @@ sub connection {
 				$client_socket->shutdown(SHUT_RDWR)
 				  ;    # we stopped using this socket
 				$client_socket->close;
-				print "Sipserver disconnected. Exiting...\n";
+				print STDERR "Sipserver disconnected. Exiting...\n" if $ENV{'DEBUG'};
 				exit;
 			}
 			else {
 				print $client_socket $respdata . $CR;
 			}
 
-			######Handle empty message ---_> next message nned a fresh connection
+			######Handle empty message -> next message needs a fresh connection -> restart proxy server
 
 			#end writing to socket
 			$client_socket->shutdown(SHUT_WR);
-
-			#?
 			$client_socket->shutdown(SHUT_RDWR);  # we stopped using this socket
 			$client_socket->close;
 
-			#$datetime = DateTime->now;
-			print
-"Sipserver response message passed to REST endpoint. Done. Listening...  \n\n";
+			print STDERR "Sipserver response message passed to REST endpoint. Done. Listening...  \n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 			return;
 		}
 
 		else {
-			print "Sipserver socket Disconnected\n";
+			print STDERR "Sipserver socket Disconnected\n" if $ENV{'DEBUG'};
 
 			#Try to establish a new fresh connection or die?
-			#connection( $client_socket, $sipsock );
 			exit;
 
 		}
@@ -249,42 +189,36 @@ sub connection {
 
 sub getConfig {
 
-	#reads sip server info from config file and returns setup parameters
-	#TODO read info from SIPdevices.xml????
-
+	#reads sip server info from config file and returns socket setup parameters
+	
 	my $device = shift;
 
-	my ( $servsocket, $host, $port );
+	my ( $proxyhost, $proxyport, $host, $port );
 
 	my $dom =
 	  XML::LibXML->load_xml(
 		location => "/home/koha/Koha/koha-tmpl/sipdevices.xml" );
 
 	foreach my $sipserver ( $dom->findnodes( '//' . $device ) ) {
+		
+		$proxyhost = $sipserver->findvalue('./proxyhost');
+		
+		$proxyport = $sipserver->findvalue('./proxyport');
 
 		$host = $sipserver->findvalue('./host');
 
-		#print "$host:";
 		$port = $sipserver->findvalue('./port');
 
-		#print "$port\n";
-		$servsocket = $sipserver->findvalue('./socket');
-
-		#print "$name";
-
-		if ($host && $port &&  $servsocket) {
-			print "Found config: '$servsocket' '$host' '$port'  in sipdevices.xml. \n";
+		if ( $host && $port ) {
+			print STDERR "Found config: '$host' '$port'  in sipdevices.xml. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 		}
 		else {
-			die "Missing parameters for '$device' in sipconfig.xml \n";
+			die "Missing parameters for '$device' in sipdevices.xml \n"  if $ENV{'DEBUG'};
 		}
 
 	}
 
-	return $servsocket, $host, $port;
-
-	#	my $host = $config->{sipdevice}->{$term}->{host};
-	#	my $port = $config->{sipdevice}->{$term}->{port};
+	return $proxyhost, $proxyport, $host, $port;
 
 }
 

@@ -3,12 +3,14 @@
 	<sipdevice1>
 		<host>10.0.3.217</host>
 		<port>6009</port>
-		<socket>/home/koha/Koha/koha-tmpl/test.sock</socket>
+		<proxyhost>0.0.0.0</proxyhost>
+		<proxyport>2899</proxyport>
 	</sipdevice1>
 	<sipdevice2>
 		<host>10.0.3.217</host>
 		<port>6010</port>
-		<socket>/home/koha/Koha/koha-tmpl/test2.sock</socket>
+		<proxyhost>0.0.0.0</proxyhost>
+		<proxyport>3899</proxyport>
 	</sipdevice2>
 
 </sipdevices>

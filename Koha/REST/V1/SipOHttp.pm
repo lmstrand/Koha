@@ -25,14 +25,12 @@ use Koha::Exceptions;
 use Koha::Logger;
 use Data::Dumper;
 use XML::LibXML;
-use XML::Simple;
 use Socket qw(:crlf);
 use IO::Socket::UNIX qw( SOCK_STREAM );
 use IO::Socket::Timeout;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
 use Getopt::Long;
 use lib("/home/koha/Koha");
-#use Errno qw( EAGAIN EINTR );
 
 use HTML::Template;
 use Try::Tiny;
@@ -48,24 +46,32 @@ sub process {
 	my $validation = validateXml( $c, $xmlrequest );
 
 	if ( $validation != 1 ) {
-		$c->render( text => "Invalid Request. '$xmlrequest'", status => 400 );
+		$c->render(
+			text   => "Validation failed. Invalid Request. ",
+			status => 400
+		);
 		return;
 	}
 
 	#process sip here
-
 	my $sipmes = extractSip($xmlrequest);
 
-	#get terminal info in XML login:"
 	#TODO Error handling
-
-#get the proxy server UNIX socket location that matches login id in XML message from SIPconfig.xml
-	my $proxyloc = getProxy( $xmlrequest, $c );
-
-	#TODO Error handling
+	#get the proxy server socket params that matches login id in XML message from SIPconfig.xml
 	
-	#UNIX socket
-	my $sipresponse = tradeSip( $proxyloc, $sipmes, $c );
+	my ( $proxyhost, $proxyport ) = extractProxy( $xmlrequest, $c );
+
+	if ( $proxyhost eq '' or $proxyport eq '' ) {
+
+		return $c->render(
+			text   => "No config found for login device. ",
+			status => 400
+		);
+	}
+
+	#TODO Error handling, necessary?
+
+	my $sipresponse = tradeSip( $proxyhost, $proxyport, $sipmes, $c );
 
 	#remove carriage return from response (\r)
 	$sipresponse =~ s/\r//g;
@@ -82,15 +88,14 @@ sub process {
 
 sub tradeSip {
 
-	#For UNIX socket
-	my ( $SOCK_PATH, $sipmes, $c ) = @_;
+	my ( $proxyhost, $proxyport, $command_message, $c ) = @_;
 
-	my $command_message = $sipmes;
-	
 	#TODO error message to endpoint?
-	my $client    = IO::Socket::UNIX->new(
-		Type => SOCK_STREAM(),
-		Peer => $SOCK_PATH,
+
+	my $client = IO::Socket::INET->new(
+		PeerAddr => $proxyhost,
+		PeerPort => $proxyport,
+		Proto    => 'tcp'
 	) or die("Can't connect to proxy server: $!\n");
 
 	$client->autoflush(1);
@@ -125,7 +130,7 @@ sub buildXml {
 	$template->param( MESSAGE => $responsemessage );
 
 	# send the obligatory Content-Type and return the template output
-	
+
 	my $respxml = $template->output();
 
 	return $respxml;
@@ -164,7 +169,6 @@ sub getLogin {
 
 	#$xc->registerNs( 'ns', 'sip' );
 
-	#use for loop?
 	my @n = $xc->findnodes('//ns1:sip');
 	for my $nod (@n) {
 		my $login = $nod->getAttribute("login");
@@ -175,61 +179,35 @@ sub getLogin {
 	}
 }
 
-sub getProxy {
+sub extractProxy {
 
-	#For reading the terminal's proxy socket path for "login" in xml message.
+	my $host = "";
+	my $port = "";
 
+	#Uses sipdevices.xml file for config.
 	my ( $xmlmessage, $c ) = @_;
+	my $term = getLogin($xmlmessage);
 
-	my $loginid = getLogin($xmlmessage);
+	my $dom =
+	  XML::LibXML->load_xml(
+		location => '/home/koha/Koha/koha-tmpl/sipdevices.xml' );
+	my $acsconfig = $dom->documentElement;
 
-	#
-	# Read configuration from SIPconfig.xml
-	#
-	# Throws a Plack error
-	#
-	#my $config = C4::SIP::Sip::Configuration->new( $ARGV[0] );
-	#my @logins;
-	#my @proxies;
+	foreach my $config ( $acsconfig->findnodes( '//' . $term ) ) {
+		$host = $config->findvalue('./proxyhost');
+		$port = $config->findvalue('./proxyport');
+	}
 
-	#	#
-	#	# Ports to bind
-	#	#
-	#	foreach my $svc ( keys %{ $config->{listeners} } ) {
-	#		push @logins, "login=" . $svc;
-	#	}
-	#	foreach my $svc ( keys %{ $config->{listeners} } ) {
-	#		push @proxies, "proxy_socket=" . $svc;
-	#	}
-	#
-	#	my %hash;
-	#	@hash{@logins} = @proxies;
-
-	
-	#these parameters are hard coded to match proxy config in      
-	#the systemd service file /etc/systemd/system/sipproxy.service
- 	
-	# key/value
-	# key = sip device name (the "login" parameter in XML)
-	# value = location of the unix socket file
-	
-	#TODO read from config file? Can systemd services file use the same file to read and pass parameters?
-	
-	my %hash = (
-		'sipdevice1', '/home/koha/Koha/koha-tmpl/test.sock',
-		'sipdevice2', '/home/koha/Koha/koha-tmpl/test2.sock'
-	);
-	
-	#Return socket path matching the "login" parameter in request XML
-	if ( exists( $hash{$loginid} ) ) {
+	#no config found
+	if ( $host eq '' or $port eq '' ) {
 
 		$c->app->log->warn(
-			"Proxy socket location found for '$loginid': '$hash{$loginid}'\n");
-		return $hash{$loginid};
+			"Missing proxy server config parameters for $term in sipdevices.xml"
+		);
+		return 0;
 	}
 	else {
-		$c->app->log->warn("Proxy socket for '$hash{$loginid}' not defined!\n");
-		return 1;
+		return $host, $port;
 	}
 
 }
@@ -240,7 +218,7 @@ sub validateXml {
 	my ( $c, $xmlbody ) = @_;
 	my $parser = XML::LibXML->new();
 
-	# parse and validate the xml against sipchema
+	# parse and validate the xml against sipschema
 	# http://biblstandard.dk/rfid/dk/rfid_sip2_over_https.htm
 	#Todo make a Koha specific version
 
