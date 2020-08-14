@@ -34,10 +34,16 @@ use Try::Tiny;
 sub process {
 	my $c = shift->openapi->valid_input or return;
 
-	my $body       = $c->req->json;
-	my $xmlrequest = $body->{request_xml};
+	my $body = $c->req->body;
+	my $xmlrequestesc = $body;
+	
+	#unescape
+	$xmlrequestesc =~ s/\\//g;
+	$xmlrequestesc =~ s/^"(.*)"$/$1/;
+	
+	my $xmlrequest = $xmlrequestesc;
 
-	#TODO validate only if there's stuff in body
+	#TODO validate only if there's stuff in body?
 	my $validation = validateXml( $c, $xmlrequest );
 
 	if ( $validation != 1 ) {

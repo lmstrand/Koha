@@ -72,7 +72,7 @@ my $sipsocket = IO::Socket::INET->new(
 	KeepAlive => 1,
 	Reuse     => 1
 
-) or die "Couldn't be a tcp server on $siphost:$sipport : $@\n";
+) or die "Couldn't be a tcp server for sipsocket on $siphost:$sipport : $@\n";
 
 print STDERR "Waiting for tcp to connect to $proxyport\n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
