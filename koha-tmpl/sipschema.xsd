@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- sip.xsd  $Revision: 1.7 $ sos@axiell.com -->
+<!-- sipschema.xsd  $Revision: 1.0 $ support@koha-suomi.fi -->
 
-<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:ns1="http://axiell.com/Schema/sip.xsd" targetNamespace="http://axiell.com/Schema/sip.xsd" elementFormDefault="unqualified" attributeFormDefault="unqualified">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:ns1="https://koha-suomi.fi/sipschema.xsd" targetNamespace="https://koha-suomi.fi/sipschema.xsd" elementFormDefault="unqualified" attributeFormDefault="unqualified">
 
   <xs:element name="sip">
 

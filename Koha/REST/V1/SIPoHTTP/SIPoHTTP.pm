@@ -1,4 +1,4 @@
-package Koha::REST::V1::SipOHttp;
+package Koha::REST::V1::SIPoHTTP::SIPoHTTP;
 
 # This file is part of Koha.
 #
@@ -26,9 +26,8 @@ use Koha::Logger;
 use XML::LibXML;
 use Socket qw(:crlf);
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
-use lib("/home/koha/Koha");
-use HTML::Template;
 use Try::Tiny;
+use File::Slurp;
 
 #This gets called from REST api
 sub process {
@@ -117,22 +116,13 @@ sub tradeSip {
 }
 
 sub buildXml {
-
+	
 	my $responsemessage = shift;
 
 	# open the html template
-
-	my $template = HTML::Template->new(
-		filename => 'sipresp.tmpl',
-		path     => ['/home/koha/Koha/koha-tmpl/'],
-	);
-
-	# fill in MESSAGE param in template
-	$template->param( MESSAGE => $responsemessage );
-
-	# send the obligatory Content-Type and return the template output
-
-	my $respxml = $template->output();
+	
+	my $respxml = read_file("/home/koha/Koha/Koha/REST/V1/SIPoHTTP/Templates/siprespxml.tmpl");
+	$respxml =~ s|<TMPL_VAR NAME=MESSAGE>|$responsemessage|;
 
 	return $respxml;
 }
@@ -188,7 +178,7 @@ sub extractProxy {
 	#Uses sipdevices.xml file for config.
 	my ( $xmlmessage, $c ) = @_;
 	my $term = getLogin($xmlmessage);
-
+	
 	my $dom =
 	  XML::LibXML->load_xml(
 		location => '/home/koha/Koha/koha-tmpl/sipdevices.xml' );
@@ -220,8 +210,7 @@ sub validateXml {
 	my $parser = XML::LibXML->new();
 
 	# parse and validate the xml against sipschema
-	# http://biblstandard.dk/rfid/dk/rfid_sip2_over_https.htm
-	#Todo make a Koha specific version
+	# https://koha-suomi.fi/sipschema.xsd
 
 	my $schema =
 	  XML::LibXML::Schema->new(

@@ -1,8 +1,8 @@
 {
   "/sipmessages": {
     "post": {
-      "x-mojo-to": "SipOHttp#process",
-      "operationId": "SipOHttp",
+      "x-mojo-to": "SIPoHTTP::SIPoHTTP#process",
+      "operationId": "SIPoHTTP",
       "tags": ["sipmessages"],
       "parameters": [
         {
