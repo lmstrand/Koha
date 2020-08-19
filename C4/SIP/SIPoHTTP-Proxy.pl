@@ -7,6 +7,7 @@ use Socket qw(:crlf);
 use XML::LibXML;
 use autodie;
 use lib 'lib';
+use POSIX qw(strftime);
 
 binmode STDERR, ':utf8';
 
@@ -24,9 +25,12 @@ $SIG{PIPE} = 'IGNORE';
 $SIG{'TSTP'} = 'IGNORE';    # Ctrl-Z disabled
 
 #Get command line argument (the sipdevice name = xml login parameter)
-my $device = shift or die "Usage: $0 SIPDEVICELOGINNAME\n";
+my $device = shift or die getTime()."Usage: $0 SIPDEVICELOGINNAME\n";
 
-print STDERR "Starting proxy server for device $device: \n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+
+
+
+print STDERR getTime(). "Starting proxy server for device: $device \n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 my ( $proxyhost, $proxyport, $siphost, $sipport ) = getConfig($device);
 
@@ -37,6 +41,7 @@ $| = 1;    # Autoflush
 #Needs to be a plain IO::Socket so we can use $client_socket->shutdown(SHUT_RD) and (SHUT_WR)to end
 #reading/writing to sipserver without problems and preserving socket connection
 
+
 my $server = IO::Socket->new(
 	Domain    => AF_INET,
 	Type      => SOCK_STREAM,
@@ -46,14 +51,14 @@ my $server = IO::Socket->new(
 	ReusePort => 1,
 	KeepAlive => 0,
 	Listen    => 5
-) || die "Can't open proxy socket for $device: $@";
+) || die (getTime(). "Can't open proxy socket for $device: $@");
 
 #handle signals
 #TODO CTRL+C sends an emtpy message to sipserver
 $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub {
-	print STDERR ("SIGTERM - External termination request. Leaving...") if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+	print STDERR getTime(). ("SIGTERM - External termination request. Leaving...") if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 	if ($server) {
-		print STDERR "Closing server socket. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+		print STDERR getTime(). "Closing server socket. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 		$server->shutdown(SHUT_RDWR);
 		$server->close;
 		exit;
@@ -72,9 +77,9 @@ my $sipsocket = IO::Socket::INET->new(
 	KeepAlive => 1,
 	Reuse     => 1
 
-) or die "Couldn't be a tcp server for sipsocket on $siphost:$sipport : $@\n";
+) or die getTime(). "Couldn't be a tcp server for sipsocket on $siphost:$sipport : $@\n";
 
-print STDERR "Waiting for tcp to connect to $proxyport\n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+print STDERR getTime(). "Waiting for tcp to connect to $proxyport\n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 while (1) {
 
@@ -83,7 +88,7 @@ while (1) {
 	#?
 	#my $sip_socket = $sipsocket->accept();
 
-	print STDERR "Socket has connected.\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+	print STDERR (strftime "[%Y/%m/%d %H:%M:%S] ", localtime). "Socket has connected.\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 	connection( $client_socket, $sipsocket );
 
@@ -99,11 +104,11 @@ sub connection {
 	$sipsock->autoflush(1);
 
 	if ( $sipsock->connected ) {
-		print STDERR "Connection to SIP socket OK. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+		print STDERR getTime(). "Connection to SIP socket OK. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 	}
 
 	else {
-		die "Can't connect to SIP socket. : $@\n";
+		die getTime(). "Can't connect to SIP socket. : $@\n";
 	}
 
 	while (1) {
@@ -122,24 +127,24 @@ sub connection {
 			$client_socket->flush;
 
 			if ( $data eq "" ) {
-				print STDERR "Empty request!" if $ENV{'DEBUG'};
+				print STDERR getTime(). "Empty request!" if $ENV{'DEBUG'};
 
 				  #return;
 			}
 
-			print STDERR ">>>>>> Sending: $data\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+			print STDERR getTime(). ">>>>>> Sending: $data\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 			print $sipsock $data;
 
 			$sipsock->recv( $respdata, 1024 );
 			$sipsock->flush;
 
-			print STDERR "<<<<<< Received from SIPserver: $respdata\n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+			print STDERR getTime(). "<<<<<< Received from SIPserver: $respdata\n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 			######Handle empty message ---_> next message needs a fresh connection
 			######Is this a failsafe in sipserver?
 			if ( $respdata eq "" ) {
-				print STDERR "Sip server returned no data (bad device login mes/sipserver down?) $data\n" if $ENV{'DEBUG'};
+				print STDERR getTime(). "Sip server returned no data (bad device login mes/sipserver down?) $data\n" if $ENV{'DEBUG'};
 				my $errordata = "Disconnected!";
 
 				#Send disconnect info to REST
@@ -152,7 +157,7 @@ sub connection {
 				$client_socket->shutdown(SHUT_RDWR)
 				  ;    # we stopped using this socket
 				$client_socket->close;
-				print STDERR "Sipserver disconnected. Exiting...\n" if $ENV{'DEBUG'};
+				print STDERR getTime(). "Sipserver disconnected. Exiting...\n" if $ENV{'DEBUG'};
 				exit;
 			}
 			else {
@@ -166,12 +171,12 @@ sub connection {
 			$client_socket->shutdown(SHUT_RDWR);  # we stopped using this socket
 			$client_socket->close;
 
-			print STDERR "Sipserver response message passed to REST endpoint. Done. Listening...  \n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+			print STDERR getTime(). "Sipserver response message passed to REST endpoint. Done. Listening...  \n\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 			return;
 		}
 
 		else {
-			print STDERR "Sipserver socket Disconnected\n" if $ENV{'DEBUG'};
+			print STDERR getTime(). "Sipserver socket Disconnected\n" if $ENV{'DEBUG'};
 
 			#Try to establish a new fresh connection or die?
 			exit;
@@ -179,6 +184,11 @@ sub connection {
 		}
 	}
 
+}
+
+sub getTime {
+	my $time = (strftime "[%Y/%m/%d %H:%M:%S] ", localtime);
+	return $time;
 }
 
 sub getConfig {
@@ -203,16 +213,19 @@ sub getConfig {
 
 		$port = $sipserver->findvalue('./port');
 
-		if ( $host && $port ) {
-			print STDERR "Found config: '$host' '$port'  in sipdevices.xml. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+		
+		
+	}
+	if (length $host or length $port or length $proxyhost or length $proxyport) {
+		print STDERR getTime(). "Found config: '$host' '$port'  in sipdevices.xml. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+			return $proxyhost, $proxyport, $host, $port;
+			
 		}
 		else {
-			die "Missing parameters for '$device' in sipdevices.xml \n"  if $ENV{'DEBUG'};
+			die getTime(). "Missing parameters for '$device' in sipdevices.xml \n"  if $ENV{'DEBUG'};
 		}
 
-	}
-
-	return $proxyhost, $proxyport, $host, $port;
+	
 
 }
 
