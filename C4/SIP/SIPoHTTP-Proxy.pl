@@ -25,12 +25,12 @@ $SIG{PIPE} = 'IGNORE';
 $SIG{'TSTP'} = 'IGNORE';    # Ctrl-Z disabled
 
 #Get command line argument (the sipdevice name = xml login parameter)
-my $device = shift or die getTime()."Usage: $0 SIPDEVICELOGINNAME\n";
+my $device = shift or die "Usage: $0 SIPDEVICELOGINNAME\n";
 
 
 
 
-print STDERR getTime(). "Starting proxy server for device: $device \n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+print STDERR getTime(). "Starting proxy server for: $device \n"  if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 my ( $proxyhost, $proxyport, $siphost, $sipport ) = getConfig($device);
 
@@ -51,12 +51,12 @@ my $server = IO::Socket->new(
 	ReusePort => 1,
 	KeepAlive => 0,
 	Listen    => 5
-) || die (getTime(). "Can't open proxy socket for $device: $@");
+) || die getTime(). "Can't open proxy socket for $device: $@";
 
 #handle signals
 #TODO CTRL+C sends an emtpy message to sipserver
 $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub {
-	print STDERR getTime(). ("SIGTERM - External termination request. Leaving...") if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+	print STDERR getTime(). "SIGTERM - External termination request. Leaving...\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 	if ($server) {
 		print STDERR getTime(). "Closing server socket. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 		$server->shutdown(SHUT_RDWR);
@@ -88,7 +88,7 @@ while (1) {
 	#?
 	#my $sip_socket = $sipsocket->accept();
 
-	print STDERR (strftime "[%Y/%m/%d %H:%M:%S] ", localtime). "Socket has connected.\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
+	print STDERR getTime(). "Socket has connected.\n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 
 	connection( $client_socket, $sipsocket );
 
@@ -216,7 +216,7 @@ sub getConfig {
 		
 		
 	}
-	if (length $host or length $port or length $proxyhost or length $proxyport) {
+	if (length $host and length $port and length $proxyhost and length $proxyport) {
 		print STDERR getTime(). "Found config: '$host' '$port'  in sipdevices.xml. \n" if ( $ENV{'DEBUG'} && $ENV{'DEBUG'} == 2 );
 			return $proxyhost, $proxyport, $host, $port;
 			
