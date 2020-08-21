@@ -1,16 +1,12 @@
 <?xml version='1.0' encoding='UTF-8' standalone="yes" ?>
 <sipdevices>
-	<sipdevice1>
+	<SIPDEVICE>
 		<host>10.0.3.217</host>
 		<port>6009</port>
-		<proxyhost>0.0.0.0</proxyhost>
-		<proxyport>2899</proxyport>
-	</sipdevice1>
+	</SIPDEVICE>
 	<sipdevice2>
 		<host>10.0.3.217</host>
 		<port>6010</port>
-		<proxyhost>0.0.0.0</proxyhost>
-		<proxyport>3899</proxyport>
 	</sipdevice2>
 
 </sipdevices>

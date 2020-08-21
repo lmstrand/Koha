@@ -24,17 +24,28 @@ use lib "$Bin";
 use Koha::Exceptions;
 use Koha::Logger;
 use XML::LibXML;
-use Socket qw(:crlf);
+use IO::Socket::INET;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
+use Socket qw(:crlf);
 use Try::Tiny;
 use File::Slurp;
+use Mojo::Log;
+
+use strict;
+use warnings qw( all );
+
+# Customize log file location and minimum log level
+my $log = Mojo::Log->new(path => '/home/koha/koha-dev/var/log/SIPoHTTP.log', level => 'info');
 
 #This gets called from REST api
 sub process {
+	
 	my $c = shift->openapi->valid_input or return;
 
 	my $body = $c->req->body;
 	my $xmlrequestesc = $body;
+	
+	$log->info("Request received.");
 	
 	#unescape
 	$xmlrequestesc =~ s/\\//g;
@@ -46,32 +57,45 @@ sub process {
 	my $validation = validateXml( $c, $xmlrequest );
 
 	if ( $validation != 1 ) {
+		
 		$c->render(
 			text   => "Validation failed. Invalid Request. ",
+			status => 400
+		);
+		
+		return;
+	}
+
+	#process sip here
+	my ($login, $password) = getLogin($xmlrequest);
+	my $sipmes = extractSip($xmlrequest, $c);
+	
+	if ($sipmes eq ""){
+		
+			$c->render(
+			text   => "Missing SIP Request in XML. ",
 			status => 400
 		);
 		return;
 	}
 
-	#process sip here
-	my $sipmes = extractSip($xmlrequest);
-
 	#TODO Error handling
 	#get the proxy server socket params that matches login id in XML message from SIPconfig.xml
 	
-	my ( $proxyhost, $proxyport ) = extractProxy( $xmlrequest, $c );
+	my ( $siphost, $sipport ) = extractServer( $xmlrequest, $c );
 
-	if ( $proxyhost eq '' or $proxyport eq '' ) {
+	if ( $siphost eq '' or $sipport eq '' ) {
+		
+		$log->error("No config found for login device. ");
 
 		return $c->render(
 			text   => "No config found for login device. ",
 			status => 400
 		);
+		
 	}
 
-	#TODO Error handling, necessary?
-
-	my $sipresponse = tradeSip( $proxyhost, $proxyport, $sipmes, $c );
+	my $sipresponse = tradeSip($login, $password, $siphost, $sipport, $sipmes, $c );
 
 	#remove carriage return from response (\r)
 	$sipresponse =~ s/\r//g;
@@ -80,6 +104,8 @@ sub process {
 
 	return try {
 		$c->render( status => 200, text => $xmlresponse );
+		$log->info("XML response passed to endpoint.");
+		
 	}
 	catch {
 		Koha::Exceptions::rethrow_exception($_);
@@ -88,17 +114,17 @@ sub process {
 
 sub tradeSip {
 
-	my ( $proxyhost, $proxyport, $command_message, $c ) = @_;
+	my ( $login, $password, $host, $port, $command_message, $c ) = @_;
 
-	#TODO error message to endpoint?
-
-	my $client = IO::Socket::INET->new(
-		PeerAddr => $proxyhost,
-		PeerPort => $proxyport,
+	my $sipsock = IO::Socket::INET->new(
+		PeerAddr => $host,
+		PeerPort => $port,
 		Proto    => 'tcp'
-	) or die("Can't connect to proxy server: $!\n");
+	) or die $log->error("Can't connect to sipserver at $host:$port.");
 
-	$client->autoflush(1);
+	$sipsock->autoflush(1);
+	
+	my $loginsip = buildLogin ($login, $password);
 
 	my $terminator = q{};
 	$terminator = ( $terminator eq 'CR' ) ? $CR : $CRLF;
@@ -106,13 +132,51 @@ sub tradeSip {
 	# Set perl to expect the same record terminator it is sending
 	$/ = $terminator;
 
-	print $client $command_message . $terminator;
+	$log->info("Trying login: $loginsip");
+		
+	my $respdata = "";
+	
+	print $sipsock $loginsip . $terminator;
+	
+	$sipsock->recv( $respdata, 1024 );
+	$sipsock->flush;
+	
+	if ($respdata == "941") {
 
-	my $data = $client->getline();
+		$log->info("Login OK. Sending: $command_message");
+		
+		print $sipsock $command_message . $terminator;
 
-	$client->close();
+		$sipsock->recv( $respdata, 1024 );
+		$sipsock->flush;
+		
+		#end writing to socket
+		$sipsock->shutdown(SHUT_WR);
+		$sipsock->shutdown(SHUT_RDWR);  # we stopped using this socket
+		$sipsock->close;
+		
+		my $respmes = $respdata;
+		$respmes =~ s/.{1}$//;
+			
+		$log->info("Received: $respmes");	
+	
+		return $respdata;
+	}
+	
+	chomp $respdata;
+	$log->error("Unauthorized login for $login: $respdata. Can't process attached SIP message.");
+	
+	return $respdata;
+}
 
-	return $data;
+sub buildLogin {
+	
+	my ( $login, $password) = @_;
+	my $siptempl = "9300CN<SIPDEVICE>|CO<SIPDEVICEPASS>|CPSIPLOCATION|";
+    $siptempl =~ s|<SIPDEVICE>|$login|;
+	$siptempl =~ s|<SIPDEVICEPASS>|$password|;
+	
+	return $siptempl;
 }
 
 sub buildXml {
@@ -129,7 +193,10 @@ sub buildXml {
 
 sub extractSip {
 
-	my $xmlmessage = shift;
+	my ($xmlmessage, $c) = @_;
+	
+	
+		
 	my $parser     = XML::LibXML->new();
 	my $xmldoc     = $parser->load_xml( string => $xmlmessage );
 
@@ -142,16 +209,23 @@ sub extractSip {
 
 		#remove <request></request> headers
 		$sample = $sample->to_literal();
+		
+		if ($sample eq ""){
+			$log->error("Missing SIP message inside XML.");
+			return;
+		}
+		$log->info("SIP message found in XML: $sample");
 
-		#die "Sipmessage inside XML request empty" unless $sample;
 		return $sample;
 	}
 }
 
 sub getLogin {
 
-	#Retrieve the self check machine name or "login:" from XML
+	#Retrieve the self check machine login info from XML
 	my $xmlmessage = shift;
+	
+	my ($login, $passw) = "";
 
 	#my $dom = XML::LibXML->load_xml( string => $xmlmessage );
 	my $parser = XML::LibXML->new();
@@ -162,22 +236,28 @@ sub getLogin {
 
 	my @n = $xc->findnodes('//ns1:sip');
 	for my $nod (@n) {
-		my $login = $nod->getAttribute("login");
-
-		return $login;
-
+		$login = $nod->getAttribute("login");
 		#last;
 	}
+	
+	my @n = $xc->findnodes('//ns1:sip');
+	for my $nod (@n) {
+		$passw = $nod->getAttribute("password");
+		#last;
+	}
+	
+	return $login, $passw;
+	
 }
 
-sub extractProxy {
+sub extractServer {
 
 	my $host = "";
 	my $port = "";
 
 	#Uses sipdevices.xml file for config.
 	my ( $xmlmessage, $c ) = @_;
-	my $term = getLogin($xmlmessage);
+	my ($term, $pass) = getLogin($xmlmessage);
 	
 	my $dom =
 	  XML::LibXML->load_xml(
@@ -185,16 +265,14 @@ sub extractProxy {
 	my $acsconfig = $dom->documentElement;
 
 	foreach my $config ( $acsconfig->findnodes( '//' . $term ) ) {
-		$host = $config->findvalue('./proxyhost');
-		$port = $config->findvalue('./proxyport');
+		$host = $config->findvalue('./host');
+		$port = $config->findvalue('./port');
 	}
 
 	#no config found
 	if ( $host eq '' or $port eq '' ) {
 
-		$c->app->log->warn(
-			"Missing proxy server config parameters for $term in sipdevices.xml"
-		);
+		$log->error("Missing server config parameters for $term in sipdevices.xml");
 		return 0;
 	}
 	else {
@@ -226,12 +304,12 @@ sub validateXml {
 		return 0;
 	}
 	finally {
-		if (@_) {
-			$c->app->log->warn("Could not validate '$xmlbody' - @_\n");
+		if (@_) {		
+			$log->error("Could not validate XML - @_\n");
 			return 0;
 		}
 		else {
-			#$c->app->log->warn("XML validated OK.");
+			$log->info("XML Validated OK.");
 			return 1;
 		}
 	};
