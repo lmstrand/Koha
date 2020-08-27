@@ -28,74 +28,101 @@ use IO::Socket::INET;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
 use Socket qw(:crlf);
 use Try::Tiny;
-use File::Slurp;
 use Mojo::Log;
+use File::Basename;
+use C4::Context;
 
 use strict;
 use warnings qw( all );
 
+my $KOHAPATH = $ENV{'KOHA_PATH'};
+my $CONFPATH = dirname( $ENV{'KOHA_CONF'} );
+
+my ( $loglevel, $logfile ) = getConfig();
+
+#my $logfile = "/home/koha/koha-dev/var/log/sipohttp.log";
+#my $loglevel = "info";
 # Customize log file location and minimum log level
-my $log = Mojo::Log->new(path => '/home/koha/koha-dev/var/log/SIPoHTTP.log', level => 'info');
+# if no config found defaults to 'debug' and default logger
+
+my $log = Mojo::Log->new(
+	path  => $logfile,
+	level => $loglevel
+);
 
 #This gets called from REST api
 sub process {
-	
+
 	my $c = shift->openapi->valid_input or return;
 
-	my $body = $c->req->body;
+	my $body          = $c->req->body;
 	my $xmlrequestesc = $body;
-	
+
 	$log->info("Request received.");
-	
+
 	#unescape
 	$xmlrequestesc =~ s/\\//g;
 	$xmlrequestesc =~ s/^"(.*)"$/$1/;
-	
+
 	my $xmlrequest = $xmlrequestesc;
 
 	#TODO validate only if there's stuff in body?
 	my $validation = validateXml( $c, $xmlrequest );
 
 	if ( $validation != 1 ) {
-		
+
 		$c->render(
-			text   => "Validation failed. Invalid Request. ",
+			text   => "Invalid Request. XML Validation failed.",
 			status => 400
 		);
-		
+
 		return;
 	}
 
 	#process sip here
-	my ($login, $password) = getLogin($xmlrequest);
-	my $sipmes = extractSip($xmlrequest, $c);
-	
-	if ($sipmes eq ""){
-		
-			$c->render(
-			text   => "Missing SIP Request in XML. ",
+	my ( $login, $password ) = getLogin($xmlrequest);
+
+	if ( !$login or !$password ) {
+
+		$log->error("Invalid request. Missing login/pw in XML.");
+
+		$c->render(
+			text   => "Invalid request. Missing login/pw in XML.",
+			status => 400
+		);
+		return;
+	}
+	my $sipmes = extractSip( $xmlrequest, $c );
+
+	unless ($sipmes) {
+
+		$log->error("Invalid request. Missing SIP Request in XML.");
+
+		$c->render(
+			text   => "Invalid request. Missing SIP Request in XML.",
 			status => 400
 		);
 		return;
 	}
 
-	#TODO Error handling
-	#get the proxy server socket params that matches login id in XML message from SIPconfig.xml
-	
+#TODO Error handling
+#get the proxy server socket params that matches login id in XML message from SIPconfig.xml
+
 	my ( $siphost, $sipport ) = extractServer( $xmlrequest, $c );
 
-	if ( $siphost eq '' or $sipport eq '' ) {
-		
+	unless ( $siphost && $sipport ) {
+
 		$log->error("No config found for login device. ");
 
 		return $c->render(
 			text   => "No config found for login device. ",
 			status => 400
 		);
-		
+
 	}
 
-	my $sipresponse = tradeSip($login, $password, $siphost, $sipport, $sipmes, $c );
+	my $sipresponse =
+	  tradeSip( $login, $password, $siphost, $sipport, $sipmes, $c );
 
 	#remove carriage return from response (\r)
 	$sipresponse =~ s/\r//g;
@@ -105,7 +132,7 @@ sub process {
 	return try {
 		$c->render( status => 200, text => $xmlresponse );
 		$log->info("XML response passed to endpoint.");
-		
+
 	}
 	catch {
 		Koha::Exceptions::rethrow_exception($_);
@@ -123,8 +150,8 @@ sub tradeSip {
 	) or die $log->error("Can't connect to sipserver at $host:$port.");
 
 	$sipsock->autoflush(1);
-	
-	my $loginsip = buildLogin ($login, $password);
+
+	my $loginsip = buildLogin( $login, $password );
 
 	my $terminator = q{};
 	$terminator = ( $terminator eq 'CR' ) ? $CR : $CRLF;
@@ -133,151 +160,146 @@ sub tradeSip {
 	$/ = $terminator;
 
 	$log->info("Trying login: $loginsip");
-		
-	my $respdata = "";
-	
+
+	my $respdata;
+
 	print $sipsock $loginsip . $terminator;
-	
+
 	$sipsock->recv( $respdata, 1024 );
 	$sipsock->flush;
-	
-	if ($respdata == "941") {
+
+	if ( $respdata == "941" ) {
 
 		$log->info("Login OK. Sending: $command_message");
-		
+
 		print $sipsock $command_message . $terminator;
 
 		$sipsock->recv( $respdata, 1024 );
 		$sipsock->flush;
-		
+
 		#end writing to socket
 		$sipsock->shutdown(SHUT_WR);
-		$sipsock->shutdown(SHUT_RDWR);  # we stopped using this socket
+		$sipsock->shutdown(SHUT_RDWR);    # we stopped using this socket
 		$sipsock->close;
-		
+
 		my $respmes = $respdata;
 		$respmes =~ s/.{1}$//;
-			
-		$log->info("Received: $respmes");	
-	
+
+		$log->info("Received: $respmes");
+
 		return $respdata;
 	}
-	
+
 	chomp $respdata;
-	$log->error("Unauthorized login for $login: $respdata. Can't process attached SIP message.");
-	
+	$log->error(
+"Unauthorized login for $login: $respdata. Can't process attached SIP message."
+	);
+
 	return $respdata;
 }
 
 sub buildLogin {
-	
-	my ( $login, $password) = @_;
+
+	my ( $login, $password ) = @_;
+
 	my $siptempl = "9300CN<SIPDEVICE>|CO<SIPDEVICEPASS>|CPSIPLOCATION|";
-    $siptempl =~ s|<SIPDEVICE>|$login|;
-	$siptempl =~ s|<SIPDEVICEPASS>|$password|;
-	
-	return $siptempl;
+	return "9300CN" . shift . "|CO" . shift . "|CPSIP2OHTTP|";
 }
 
 sub buildXml {
-	
+
 	my $responsemessage = shift;
 
-	# open the html template
-	
-	my $respxml = read_file("/home/koha/Koha/Koha/REST/V1/SIPoHTTP/Templates/siprespxml.tmpl");
-	$respxml =~ s|<TMPL_VAR NAME=MESSAGE>|$responsemessage|;
+	my $respxml = '<?xml version="1.0" encoding="UTF-8"?>
+
+<ns1:sip xsi:schemaLocation="https://koha-suomi.fi/sipschema.xsd" xmlns:ns1="https://koha-suomi.fi/sipschema.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+           <response><TMPL_VAR_MESSAGE></response>
+
+</ns1:sip>';
+
+	$respxml =~ s|<TMPL_VAR_MESSAGE>|$responsemessage|;
 
 	return $respxml;
 }
 
 sub extractSip {
 
-	my ($xmlmessage, $c) = @_;
-	
-	
-		
-	my $parser     = XML::LibXML->new();
-	my $xmldoc     = $parser->load_xml( string => $xmlmessage );
+	my ( $xmlmessage, $c ) = @_;
 
-	# for finding all stuff inside <request></request>
-	my $messageparam = 'request';
+	my $parser = XML::LibXML->new();
+	my $xmldoc = $parser->load_xml( string => $xmlmessage );
+	my $xc     = XML::LibXML::XPathContext->new( $xmldoc->documentElement() );
 
-	for my $sample ( $xmldoc->findnodes( './/' . $messageparam ) )
+	my ($node) = $xc->findnodes('//request');
 
-	{
+	my $sample = $node->textContent;
+	return $sample;
 
-		#remove <request></request> headers
-		$sample = $sample->to_literal();
-		
-		if ($sample eq ""){
-			$log->error("Missing SIP message inside XML.");
-			return;
-		}
-		$log->info("SIP message found in XML: $sample");
+}
 
-		return $sample;
-	}
+sub getConfig {
+
+	my $doc =
+	  XML::LibXML->load_xml( location => $CONFPATH . '/sip2ohttp-config.xml' );
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement() );
+
+	my ($node) = $xc->findnodes( '//' . "Config" );
+
+	$loglevel = $node->findvalue('./loglevel');
+	$logfile  = $node->findvalue('./logfile');
+
+	return $loglevel, $logfile;
 }
 
 sub getLogin {
 
 	#Retrieve the self check machine login info from XML
 	my $xmlmessage = shift;
-	
-	my ($login, $passw) = "";
 
-	#my $dom = XML::LibXML->load_xml( string => $xmlmessage );
+	my ( $login, $passw );
+
 	my $parser = XML::LibXML->new();
 	my $doc    = $parser->load_xml( string => $xmlmessage );
 	my $xc     = XML::LibXML::XPathContext->new( $doc->documentElement() );
 
-	#$xc->registerNs( 'ns', 'sip' );
+	my ($node) = $xc->findnodes('//ns1:sip');
 
-	my @n = $xc->findnodes('//ns1:sip');
-	for my $nod (@n) {
-		$login = $nod->getAttribute("login");
-		#last;
+	try {
+		$login = $node->getAttribute("login");
+		$passw = $node->getAttribute("password");
+
+		return $login, $passw;
 	}
-	
-	my @n = $xc->findnodes('//ns1:sip');
-	for my $nod (@n) {
-		$passw = $nod->getAttribute("password");
-		#last;
+	catch {
+		return 0;
 	}
-	
-	return $login, $passw;
-	
+
 }
 
 sub extractServer {
 
-	my $host = "";
-	my $port = "";
+	my ( $host, $port );
 
 	#Uses sipdevices.xml file for config.
-	my ( $xmlmessage, $c ) = @_;
-	my ($term, $pass) = getLogin($xmlmessage);
-	
-	my $dom =
-	  XML::LibXML->load_xml(
-		location => '/home/koha/Koha/koha-tmpl/sipdevices.xml' );
-	my $acsconfig = $dom->documentElement;
+	my ( $xmlmessage, $c )    = @_;
+	my ( $term,       $pass ) = getLogin($xmlmessage);
 
-	foreach my $config ( $acsconfig->findnodes( '//' . $term ) ) {
-		$host = $config->findvalue('./host');
-		$port = $config->findvalue('./port');
-	}
+	my $doc =
+	  XML::LibXML->load_xml( location => $CONFPATH . '/sip2ohttp-config.xml' );
+	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement() );
 
-	#no config found
-	if ( $host eq '' or $port eq '' ) {
+	my ($node) = $xc->findnodes( '//' . $term );
 
-		$log->error("Missing server config parameters for $term in sipdevices.xml");
+	unless ($node) {
+		$log->error(
+			"Missing server config parameters for $term in sipdevices.xml");
 		return 0;
 	}
-	else {
-		return $host, $port;
-	}
+
+	$host = $node->findvalue('./host');
+	$port = $node->findvalue('./port');
+	return $host, $port;
 
 }
 
@@ -289,29 +311,21 @@ sub validateXml {
 
 	# parse and validate the xml against sipschema
 	# https://koha-suomi.fi/sipschema.xsd
-
 	my $schema =
 	  XML::LibXML::Schema->new(
-		location => '/home/koha/Koha/koha-tmpl/sipschema.xsd' );
+		location => $KOHAPATH . '/koha-tmpl/sipschema.xsd' );
 
 	try {
+
 		my $xmldoc = $parser->load_xml( string => $xmlbody );
 		$schema->validate($xmldoc);
+		$log->info("XML Validated OK.");
 		return 1;
 	}
 	catch {
-		# ...code run in case of error
+		$log->error("Could not validate XML - @_");
 		return 0;
-	}
-	finally {
-		if (@_) {		
-			$log->error("Could not validate XML - @_\n");
-			return 0;
-		}
-		else {
-			$log->info("XML Validated OK.");
-			return 1;
-		}
+
 	};
 
 }
