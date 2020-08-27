@@ -30,7 +30,6 @@ use Socket qw(:crlf);
 use Try::Tiny;
 use Mojo::Log;
 use File::Basename;
-use C4::Context;
 
 use strict;
 use warnings qw( all );
@@ -66,7 +65,6 @@ sub process {
 
 	my $xmlrequest = $xmlrequestesc;
 
-	#TODO validate only if there's stuff in body?
 	my $validation = validateXml( $c, $xmlrequest );
 
 	if ( $validation != 1 ) {
@@ -104,9 +102,6 @@ sub process {
 		);
 		return;
 	}
-
-#TODO Error handling
-#get the proxy server socket params that matches login id in XML message from SIPconfig.xml
 
 	my ( $siphost, $sipport ) = extractServer( $xmlrequest, $c );
 
@@ -177,7 +172,6 @@ sub tradeSip {
 		$sipsock->recv( $respdata, 1024 );
 		$sipsock->flush;
 
-		#end writing to socket
 		$sipsock->shutdown(SHUT_WR);
 		$sipsock->shutdown(SHUT_RDWR);    # we stopped using this socket
 		$sipsock->close;
@@ -281,7 +275,6 @@ sub extractServer {
 
 	my ( $host, $port );
 
-	#Uses sipdevices.xml file for config.
 	my ( $xmlmessage, $c )    = @_;
 	my ( $term,       $pass ) = getLogin($xmlmessage);
 
