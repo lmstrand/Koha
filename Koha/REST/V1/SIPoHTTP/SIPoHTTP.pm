@@ -223,20 +223,6 @@ sub extractSip {
 
 }
 
-sub getConfig {
-
-	my $doc =
-	  XML::LibXML->load_xml( location => $CONFPATH . '/sip2ohttp-config.xml' );
-	my $xc = XML::LibXML::XPathContext->new( $doc->documentElement() );
-
-	my ($node) = $xc->findnodes( '//' . "Config" );
-
-	my $loglevel = $node->findvalue('./loglevel');
-	my $logfile  = $node->findvalue('./logfile');
-
-	return $loglevel, $logfile;
-}
-
 sub getLogin {
 
 	#Retrieve the self check machine login info from XML
