@@ -30,24 +30,15 @@ use Socket qw(:crlf);
 use Try::Tiny;
 use Mojo::Log;
 use File::Basename;
+use C4::Context;
 
 use strict;
 use warnings qw( all );
 
-my $KOHAPATH = $ENV{'KOHA_PATH'};
 my $CONFPATH = dirname( $ENV{'KOHA_CONF'} );
+my $KOHAPATH = C4::Context->config('intranetdir');
 
-my ( $loglevel, $logfile ) = getConfig();
-
-#my $logfile = "/home/koha/koha-dev/var/log/sipohttp.log";
-#my $loglevel = "info";
-# Customize log file location and minimum log level
-# if no config found defaults to 'debug' and default logger
-
-my $log = Mojo::Log->new(
-	path  => $logfile,
-	level => $loglevel
-);
+my $log = Koha::Logger->get();
 
 #This gets called from REST api
 sub process {
@@ -142,7 +133,7 @@ sub tradeSip {
 		PeerAddr => $host,
 		PeerPort => $port,
 		Proto    => 'tcp'
-	) or die $log->error("Can't connect to sipserver at $host:$port.");
+	) or die $log->fatal("Can't create a socket for sipserver. Sipserver down?");
 
 	$sipsock->autoflush(1);
 
@@ -240,8 +231,8 @@ sub getConfig {
 
 	my ($node) = $xc->findnodes( '//' . "Config" );
 
-	$loglevel = $node->findvalue('./loglevel');
-	$logfile  = $node->findvalue('./logfile');
+	my $loglevel = $node->findvalue('./loglevel');
+	my $logfile  = $node->findvalue('./logfile');
 
 	return $loglevel, $logfile;
 }
