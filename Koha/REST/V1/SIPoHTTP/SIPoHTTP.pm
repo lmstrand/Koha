@@ -46,15 +46,9 @@ sub process {
 	my $c = shift->openapi->valid_input or return;
 
 	my $body          = $c->req->body;
-	my $xmlrequestesc = $body;
+	my $xmlrequest = $body;
 
 	$log->info("Request received.");
-
-	#unescape
-	$xmlrequestesc =~ s/\\//g;
-	$xmlrequestesc =~ s/^"(.*)"$/$1/;
-
-	my $xmlrequest = $xmlrequestesc;
 
 	my $validation = validateXml( $c, $xmlrequest );
 
